@@ -1,0 +1,57 @@
+const express = require("express");
+const cors = require("cors");
+const { Pool } = require("pg");
+require("dotenv").config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// PostgreSQL connection
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT,
+});
+
+// Get all inventory items
+app.get("/api/inventory", async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM medicines ORDER BY name");
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch inventory" });
+  }
+});
+
+// Record a sale
+app.post("/api/sales", async (req, res) => {
+  const { patientName, cart } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Get or create patient
+    let result = await client.query("SELECT id FROM patients WHERE name = $1", [patientName]);
+    let patientId;
+    if (result.rows.length === 0) {
+      const insert = await client.query("INSERT INTO patients(name) VALUES ($1) RETURNING id", [patientName]);
+      patientId = insert.rows[0].id;
+    } else {
+      patientId = result.rows[0].id;
+    }
+
+    // Calculate total
+    const total = cart.reduce((sum, item) => sum + item.total, 0);
+
+    // Create sale
+    const sale = await client.query(
+      "INSERT INTO sales(patient_id, total) VALUES ($1, $2) RETURNING id",
+      [patientId, total]
+    );
+    const saleId = sale.rows[0].id;
+
+    // Create
